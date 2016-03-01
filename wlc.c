@@ -11,7 +11,6 @@ int parser(char *input)
 	mpc_parser_t *Expression = mpc_new("expression");
 	mpc_parser_t *Product = mpc_new("product");
 	mpc_parser_t *Value = mpc_new("value");
-	mpc_parser_t *Maths = mpc_new("maths");
 	mpc_parser_t *Variable = mpc_new("variable");
 	mpc_parser_t *Array = mpc_new("array");
 	mpc_parser_t *Leftside = mpc_new("leftside");
@@ -19,7 +18,10 @@ int parser(char *input)
 	mpc_parser_t *Block = mpc_new("block");
 	mpc_parser_t *Varlist = mpc_new("varlist");
 	mpc_parser_t *Parlist = mpc_new("parlist");
+	mpc_parser_t *Veclist = mpc_new("veclist");
 	mpc_parser_t *System = mpc_new("system");
+	mpc_parser_t *Catastrophe = mpc_new("catastrophe");
+	mpc_parser_t *Declare = mpc_new("declare");
 
 	mpca_lang(MPCA_LANG_DEFAULT,
 			"integer \"integer\" : /[0-9]+/ ;"
@@ -31,17 +33,19 @@ int parser(char *input)
 			"value : <float> | <integer> | <array> | <variable> | '(' <expression> ')' ;"
 			"leftside : <array> | <variable> ;"
 			"assignment : <leftside> /<-/ <expression> ;"
-			"block : /BEGIN\n/ (<assignment> ';')* /END\n/ ;"
-			"varlist: /VARIABLES/ (<variable> (','|';'))+\n ;"
-			"parlist: /PARAMETERS/ (<variable> (','|';'))+\n ;"
-			"system: /^/ /SYSTEM/ <variable> '('<integer>')' <varlist> <block> /$/ ;"
-			"maths : /^/ <expression> /$/ ;",
+			"block : /BEGIN/ (<assignment> ';')* /END/ ;"
+			"varlist: /VARIABLES/ (<variable> (','|';'))+ ;"
+			"parlist: /PARAMETERS/ (<variable> (','|';'))+ ;"
+			"veclist: /VECTORS/ (<array> (','|';'))+ ;"
+			"system: /SYSTEM/ <variable> '('<integer>')' <varlist> <block> ;"
+			"declare: <parlist> | <varlist> | <veclist>;"
+			"catastrophe : /^/ /CATASTROPHE/ <variable> (<declare>)+ (<system>)+ <block>'.' /$/ ;",
 			Integer,
 			Float,
 			Expression,
 			Product,
 			Value,
-			Maths,
+			Catastrophe,
 			Variable,
 			Array,
 			Leftside,
@@ -49,12 +53,14 @@ int parser(char *input)
 			Block,
 			Varlist,
 			Parlist,
-			System
+			Veclist,
+			System,
+			Declare
 		 );
 
 	mpc_result_t result;
 
-	if (mpc_parse("stdin>", input, System, &result)) {
+	if (mpc_parse("stdin>", input, Catastrophe, &result)) {
 		mpc_ast_print(result.output);
 		mpc_ast_delete(result.output);
 	} else {
@@ -62,13 +68,13 @@ int parser(char *input)
 		mpc_err_delete(result.error);
 	}
 
-	mpc_cleanup(14,
+	mpc_cleanup(16,
 			Integer,
 			Float,
 			Expression,
 			Product,
 			Value,
-			Maths,
+			Catastrophe,
 			Variable,
 			Array,
 			Leftside,
@@ -76,13 +82,22 @@ int parser(char *input)
 			Block,
 			Varlist,
 			Parlist,
-			System
+			Veclist,
+			System,
+			Declare
 		   );
 }
 
 int main(int argc, char *argv[])
 {
 	parser(
+		"CATASTROPHE A3\n"
+		"PARAMETERS\n"
+		"l1, l2, l3;\n"
+		"VARIABLES\n"
+		"gamma1, gamma2;\n"
+		"VECTORS\n"
+		"Y[6];\n"
 		"SYSTEM A3 (6)\n"
 		"VARIABLES a, b, c, d;\n"
 		"BEGIN\n"
@@ -91,6 +106,8 @@ int main(int argc, char *argv[])
 		"a <- a + 3;"
 		"yarr[4] <- lambda * (x + 1);"
 		"END\n"
+		"BEGIN\n"
+		"END.\n"
 	);
 	return 0;
 }
