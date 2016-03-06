@@ -22,6 +22,7 @@ int parser(char *input)
 	mpc_parser_t *System = mpc_new("system");
 	mpc_parser_t *Catastrophe = mpc_new("catastrophe");
 	mpc_parser_t *Declare = mpc_new("declare");
+	mpc_parser_t *Function = mpc_new("function");
 
 	mpca_lang(MPCA_LANG_DEFAULT,
 			"integer \"integer\" : /[0-9]+/ ;"
@@ -30,7 +31,7 @@ int parser(char *input)
 			"array : <variable> '[' <expression> ']' ;"
 			"expression : <product> (('+' | '-') <product>)* ;"
 			"product : <value> (('*' | '/') <value>)* ;"
-			"value : <float> | <integer> | <array> | <variable> | '(' <expression> ')' ;"
+			"value : <float> | <integer> | <function> | <array> | <variable> | '(' <expression> ')' ;"
 			"leftside : <array> | <variable> ;"
 			"assignment : <leftside> /<-/ <expression> ;"
 			"block : /BEGIN/ (<assignment> ';')* /END/ ;"
@@ -39,7 +40,8 @@ int parser(char *input)
 			"veclist: /VECTORS/ (<array> (','|';'))+ ;"
 			"system: /SYSTEM/ <variable> '('<integer>')' <varlist> <block> ;"
 			"declare: <parlist> | <varlist> | <veclist>;"
-			"catastrophe : /^/ /CATASTROPHE/ <variable> (<declare>)+ (<system>)+ <block>'.' /$/ ;",
+			"catastrophe : /^/ /CATASTROPHE/ <variable> (<declare>)+ (<system>)+ <block>'.' /$/ ;"
+			"function: <variable> '(' <expression> (',' <expression>)* ')' ;",
 			Integer,
 			Float,
 			Expression,
@@ -55,7 +57,8 @@ int parser(char *input)
 			Parlist,
 			Veclist,
 			System,
-			Declare
+			Declare,
+			Function
 		 );
 
 	mpc_result_t result;
@@ -68,7 +71,7 @@ int parser(char *input)
 		mpc_err_delete(result.error);
 	}
 
-	mpc_cleanup(16,
+	mpc_cleanup(17,
 			Integer,
 			Float,
 			Expression,
@@ -84,7 +87,8 @@ int parser(char *input)
 			Parlist,
 			Veclist,
 			System,
-			Declare
+			Declare,
+			Function
 		   );
 }
 
@@ -101,9 +105,9 @@ int main(int argc, char *argv[])
 		"SYSTEM A3 (6)\n"
 		"VARIABLES a, b, c, d;\n"
 		"BEGIN\n"
-		"a <- a + 3.2;"
+		"a <- a + vasya(x + 4) + 3.2;"
 		"a <- a + 3;"
-		"a <- a + 3;"
+		"a <- 4;"
 		"yarr[4] <- lambda * (x + 1);"
 		"END\n"
 		"BEGIN\n"
