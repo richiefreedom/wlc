@@ -40,50 +40,6 @@ struct symbol_table {
 	unsigned int num_symbols;
 };
 
-struct system {
-	char name[SYS_NAME_LEN];
-	unsigned int num_equations;
-	struct symbol_table sym_table;
-};
-
-struct catastrophe {
-	char name[CAT_NAME_LEN];
-	struct symbol_table sym_table;
-	struct system systems[MAX_EQNS_PER_CAT];
-	unsigned int num_systems;
-};
-
-enum parser_state{
-	PSTATE_INITIAL = 0,
-	PSTATE_CATASTROPHE,
-	PSTATE_CATASTROPHE_NAME,
-	PSTATE_LEVEL0_DECL,
-	PSTATE_LEVEL0_AFTER_DECL,
-	PSTATE_LEVEL0_SYSTEM,
-	PSTATE_LEVEL0_AFTER_SYSTEM,
-	PSTATE_LEVEL0_MAIN_BLOCK,
-};
-
-
-struct parse_table;
-
-typedef int (*walk_func_t)(mpc_ast_t *ast, struct symbol_table *sym_table,
-		struct parse_table *parse_table);
-
-struct parse_table_entry {
-	char *tag;
-	walk_func_t func;
-	struct parse_table *parse_table;
-};
-
-struct parse_table {
-	struct parse_table_entry *entries;
-};
-
-struct catastrophe   catastrophe;
-enum   parser_state  parser_state   = PSTATE_INITIAL;
-struct system       *current_system = NULL;
-
 int add_symbol(struct symbol_table *table, char *name,
 		enum symbol_type type, unsigned int capacity)
 {
@@ -114,6 +70,286 @@ struct symbol *find_symbol(struct symbol_table *table, char *name)
 
 	return NULL;
 }
+
+struct system {
+	char name[SYS_NAME_LEN];
+	unsigned int num_equations;
+	struct symbol_table sym_table;
+};
+
+struct catastrophe {
+	char name[CAT_NAME_LEN];
+	struct symbol_table sym_table;
+	struct system systems[MAX_EQNS_PER_CAT];
+	unsigned int num_systems;
+};
+
+enum parser_state{
+	PSTATE_INITIAL = 0,
+	PSTATE_CATASTROPHE,
+	PSTATE_CATASTROPHE_NAME,
+	PSTATE_LEVEL0_DECL,
+	PSTATE_LEVEL0_AFTER_DECL,
+	PSTATE_LEVEL0_SYSTEM,
+	PSTATE_LEVEL0_AFTER_MAIN_BLOCK,
+};
+
+
+struct parse_table_entry;
+
+typedef int (*walk_func_t)(mpc_ast_t *ast, struct symbol_table *sym_table,
+		struct parse_table_entry *parse_table[]);
+
+struct parse_table_entry {
+	char *tag;
+	walk_func_t func;
+	struct parse_table_entry *(*parse_table[]);
+};
+
+struct catastrophe   catastrophe;
+enum   parser_state  parser_state   = PSTATE_INITIAL;
+struct system       *current_system = NULL;
+
+/*
+ * Most of the analyzer's code is data-driven. The following declarations are
+ * the set of semantic analysis and generation rules.
+ */
+
+extern struct parse_table_entry *parse_leaf_table[];
+extern struct parse_table_entry *parse_value_table[];
+extern struct parse_table_entry *parse_product_table[];
+extern struct parse_table_entry *parse_function_table[];
+extern struct parse_table_entry *parse_expression_table[];
+
+int apply_parse_rule(mpc_ast_t *ast, struct symbol_table *sym_table,
+		struct parse_table_entry *parse_table[], int strict)
+{
+	int i, ret;
+
+	for (i = 0; parse_table[i]; i++) {
+		int match = 0;
+
+		switch (strict) {
+		case 1:
+			if (ast->tag == strstr(ast->tag, parse_table[i]->tag))
+				match = 1;
+			break;
+		default:
+			if (strstr(ast->tag, parse_table[i]->tag))
+				match = 1;
+		};
+
+		if (match) {
+			ret = parse_table[i]->func(ast, sym_table,
+					*parse_table[i]->parse_table);
+			if (ret)
+				return -1;
+
+			return 0;
+		}
+	}
+
+	ERROR_PRINT("Cannot find suitable rule %s!\n",
+		(strict)? "strictly" : "relaxed");
+	ERROR_PRINT("for tag: %s in %s.\n",
+			ast->tag, ast->tag);
+
+	return -1;
+}
+
+int walk_something(mpc_ast_t *ast, struct symbol_table *sym_table,
+		struct parse_table_entry *parse_table[])
+{
+	int i, ret;
+
+	if (strlen(ast->contents)) {
+		ret = apply_parse_rule(ast, sym_table, parse_leaf_table, 0);
+		if (ret)
+			return -1;
+	}
+
+	for (i = 0; i < ast->children_num; i++) {
+		if (strstr(ast->children[i]->tag, "char")) {
+			printf("%s", ast->children[i]->contents);
+		} else {
+			ret = apply_parse_rule(ast->children[i], sym_table,
+				parse_table, 1);
+			if (ret)
+				return -1;
+		}
+	}
+
+	return 0;
+}
+
+int walk_variable(mpc_ast_t *ast, struct symbol_table *sym_table,
+		struct parse_table_entry *parse_table[])
+{
+	if (strlen(ast->contents)) {
+		struct symbol *sym;
+		int sym_err = 1;
+
+		if (sym_table) {
+			sym = find_symbol(sym_table, ast->contents);
+			if (sym)
+				sym_err = 0;
+		}
+
+		sym = find_symbol(&catastrophe.sym_table, ast->contents);
+		if (sym)
+			sym_err = 0;
+
+		if (sym_err) {
+			ERROR_PRINT("Unknown symbol: %s!\n", ast->contents);
+			return -1;
+		}
+
+		printf("%s", ast->contents);
+
+		return 0;
+	}
+
+	ERROR_PRINT("Cannot walk variable (AST issue)!\n");
+	return -1;
+}
+
+int walk_array(mpc_ast_t *ast, struct symbol_table *sym_table,
+		struct parse_table_entry *parse_table[])
+{
+	printf("%s[%s]", ast->children[0]->contents,
+			ast->children[2]->contents);
+
+	return 0;
+}
+
+int walk_ass_regex(mpc_ast_t *ast, struct symbol_table *sym_table,
+		struct parse_table_entry *parse_table[])
+{
+	if (0 == strcmp(ast->contents, "<-")) {
+		printf(" = ");
+		return 0;
+	}
+	return 0;
+}
+
+char *known_functions[] = {
+	"RungeKutta",
+	"Vasya",
+	NULL
+};
+
+int is_known_function(char *name)
+{
+	int i;
+
+	for (i = 0; known_functions[i]; i++) {
+		if (0 == strcmp(known_functions[i], name))
+			return 1;
+	}
+
+	return 0;
+}
+
+int walk_funcname(mpc_ast_t *ast, struct symbol_table *sym_table,
+		struct parse_table_entry *parse_table[])
+{
+	if (strlen(ast->contents)) {
+		if (!is_known_function(ast->contents)) {
+			ERROR_PRINT("Unknown function!\n");
+			return -1;
+		}
+		printf("%s", ast->contents);
+		return 0;
+	}
+
+	ERROR_PRINT("Cannot walk function name (AST issue)!\n");
+	return -1;
+}
+
+int walk_echo(mpc_ast_t *ast, struct symbol_table *sym_table,
+		struct parse_table_entry *parse_table[])
+{
+	printf("%s", ast->contents);
+
+	return 0;
+}
+
+struct parse_table_entry parse_value =
+	{"value|", walk_something, parse_value_table};
+
+struct parse_table_entry parse_expression =
+	{"expression|", walk_something, parse_expression_table};
+
+struct parse_table_entry parse_variable =
+	{"variable|", walk_variable, NULL};
+
+struct parse_table_entry parse_leftside_variable =
+	{"leftside|variable|", walk_variable, NULL};
+
+struct parse_table_entry parse_value_variable =
+	{"value|variable|", walk_variable, NULL};
+
+struct parse_table_entry parse_value_integer =
+	{"value|integer|", walk_echo, NULL};
+
+struct parse_table_entry parse_value_float =
+	{"value|float|", walk_echo, NULL};
+
+struct parse_table_entry parse_array =
+	{"array|", walk_array, NULL};
+
+struct parse_table_entry parse_product =
+	{"product|", walk_something, parse_product_table};
+
+struct parse_table_entry parse_function =
+	{"function|", walk_something, parse_function_table};
+
+struct parse_table_entry parse_funcname =
+	{"funcname|", walk_funcname, NULL};
+
+struct parse_table_entry parse_ass_regex =
+	{"regex", walk_ass_regex, NULL};
+
+struct parse_table_entry *parse_value_table[] = {
+	&parse_expression,
+	NULL
+};
+
+struct parse_table_entry *parse_product_table[] = {
+	&parse_value_variable,
+	&parse_value,
+	NULL
+};
+
+struct parse_table_entry *parse_function_table[] = {
+	&parse_expression,
+	&parse_funcname,
+	NULL
+};
+
+struct parse_table_entry *parse_expression_table[] = {
+	&parse_product,
+	&parse_function,
+	&parse_expression,
+	NULL
+};
+
+struct parse_table_entry *parse_assignment[] = {
+	&parse_leftside_variable,
+	&parse_ass_regex,
+	&parse_variable,
+	&parse_array,
+	&parse_expression,
+	&parse_product,
+	NULL
+};
+
+struct parse_table_entry *parse_leaf_table[] = {
+	&parse_value_variable,
+	&parse_value_integer,
+	&parse_value_float,
+	NULL
+};
 
 int add_system(struct catastrophe *catastrophe, char *name,
 		unsigned int num_equations)
@@ -192,158 +428,15 @@ int walk_level0_veclist(mpc_ast_t *ast)
 	return 0;
 }
 
-int walk_value(mpc_ast_t *ast, struct symbol_table *sym_table)
-{
-	int i, ret;
-
-	if (strlen(ast->contents)) {
-		printf("%s", ast->contents);
-		return 0;
-	}
-
-	for (i = 0; i < ast->children_num; i++) {
-		if (NULL != strstr(ast->children[i]->tag, "char")) {
-			printf("%s", ast->children[i]->contents);
-		} else if (NULL != strstr(ast->children[i]->tag, "expression|")) {
-			ret = walk_expression(ast->children[i], sym_table);
-			if (ret)
-				return -1;
-		}
-	}
-
-	return 0;
-}
-
-int walk_product(mpc_ast_t *ast, struct symbol_table *sym_table)
-{
-	int i, ret;
-
-	if (strlen(ast->contents)) {
-		printf("%s", ast->contents);
-		return 0;
-	}
-
-	for (i = 0; i < ast->children_num; i++) {
-		if (NULL != strstr(ast->children[i]->tag, "char")) {
-			printf("%s", ast->children[i]->contents);
-		} else if (NULL != strstr(ast->children[i]->tag, "value|")) {
-			ret = walk_value(ast->children[i], sym_table);
-			if (ret)
-				return -1;
-		}
-	}
-
-	return 0;
-}
-
-int walk_function(mpc_ast_t *ast, struct symbol_table *sym_table)
-{
-	int i, ret;
-
-	for (i = 0; i < ast->children_num; i++) {
-		if (NULL != strstr(ast->children[i]->tag, "char")) {
-			printf("%s", ast->children[i]->contents);
-		} else if (NULL != strstr(ast->children[i]->tag, "expression|>")) {
-			ret = walk_expression(ast->children[i], sym_table);
-			if (ret)
-				return -1;
-		} else if (NULL != strstr(ast->children[i]->tag, "variable|")) {
-			printf("%s", ast->children[i]->contents);
-		}
-	}
-
-	return 0;
-}
-
-
-int walk_something(mpc_ast_t *ast, struct symbol_table *sym_table,
-		struct parse_table *parse_table)
-{
-	int i, j, ret;
-
-	if (strlen(ast->contents)) {
-		printf("%s", ast->contents);
-		return 0;
-	}
-
-	for (i = 0; i < ast->children_num; i++) {
-		if (strstr(ast->children[i]->tag, "char")) {
-			printf("%s", ast->children[i]->contents);
-		} else {
-			for (j = 0; parse_table->entries[j].tag; j++) {
-				if (strstr(ast->children[i]->tag,
-					parse_table->entries[i].tag)) {
-					ret = parse_table->entries[i].func(
-						ast->children[i], sym_table,
-						parse_table->entries[i].parse_table);
-				}
-			}
-		}
-	}
-
-	return 0;
-}
-
-int walk_expression(mpc_ast_t *ast, struct symbol_table *sym_table)
-{
-	int i, ret;
-
-	if (strlen(ast->contents)) {
-		printf("%s", ast->contents);
-		return 0;
-	}
-
-	for (i = 0; i < ast->children_num; i++) {
-		if (NULL != strstr(ast->children[i]->tag, "char")) {
-			printf("%s", ast->children[i]->contents);
-		} else if (NULL != strstr(ast->children[i]->tag, "product|")) {
-			ret = walk_product(ast->children[i], sym_table);
-			if (ret)
-				return -1;
-		} else if (NULL != strstr(ast->children[i]->tag, "function|>")) {
-			ret = walk_function(ast->children[i], sym_table);
-			if (ret)
-				return -1;
-		} else if (NULL != strstr(ast->children[i]->tag, "expression|>")) {
-			printf("(");
-			ret = walk_expression(ast->children[i], sym_table);
-			if (ret)
-				return -1;
-			printf(")");
-		}
-	}
-
-	return 0;
-}
-
-int walk_array(mpc_ast_t *ast, struct symbol_table *sym_table)
-{
-	printf("%s[%s]", ast->children[0]->contents,
-			ast->children[2]->contents);
-
-	return 0;
-}
-
 int walk_assignment(mpc_ast_t *ast, struct symbol_table *sym_table)
 {
 	int ret;
 
-	if (NULL != strstr(ast->children[0]->tag, "leftside|variable|")) {
-		printf("%s = ", ast->children[0]->contents);
-		ret = walk_expression(ast->children[2], sym_table);
-		if (ret)
-			return -1;
-		printf(";\n");
-	} else if (0 == strcmp(ast->children[0]->tag, "array|>")) {
-		ret = walk_array(ast->children[0], sym_table);
-		if (ret)
-			return -1;
-		printf(" = ");
-		ret = walk_expression(ast->children[2], sym_table);
-		if (ret)
-			return -1;
-		printf(";\n");
-	}
+	ret = walk_something(ast, sym_table, parse_assignment);
+	if (ret)
+		return -1;
+
+	printf(";\n");
 
 	return 0;
 }
@@ -393,8 +486,23 @@ int walk_level0_system(mpc_ast_t *ast)
 	return 0;
 }
 
+int walk_level0_main_block(mpc_ast_t *ast)
+{
+	int i, ret;
+
+	DEBUG_PRINT("Main block found.\n");
+
+	ret = walk_block(ast, &current_system->sym_table);
+	if (ret)
+		return -1;
+
+	return 0;
+}
+
 int walk_level0(mpc_ast_t *ast)
 {
+	int ret;
+
 	switch (parser_state) {
 	case PSTATE_INITIAL:
 		parser_state = PSTATE_CATASTROPHE;
@@ -414,18 +522,26 @@ int walk_level0(mpc_ast_t *ast)
 	case PSTATE_LEVEL0_AFTER_DECL:
 		if (0 == strcmp(ast->tag, "system|>")) {
 			parser_state = PSTATE_LEVEL0_SYSTEM;
-			walk_level0_system(ast);
+			ret = walk_level0_system(ast);
+			if (ret)
+				return -1;
 			break;
 		}
 	case PSTATE_LEVEL0_DECL:
 		if (0 == strcmp(ast->tag, "parlist|>")) {
-			walk_level0_parlist(ast);
+			ret = walk_level0_parlist(ast);
+			if (ret)
+				return -1;
 			parser_state = PSTATE_LEVEL0_AFTER_DECL;
 		} else if (0 == strcmp(ast->tag, "varlist|>")) {
-			walk_level0_varlist(ast);
+			ret = walk_level0_varlist(ast);
+			if (ret)
+				return -1;
 			parser_state = PSTATE_LEVEL0_AFTER_DECL;
 		} else if (0 == strcmp(ast->tag, "veclist|>")) {
-			walk_level0_veclist(ast);
+			ret = walk_level0_veclist(ast);
+			if (ret)
+				return -1;
 			parser_state = PSTATE_LEVEL0_AFTER_DECL;
 		} else {
 			ERROR_PRINT("One of declaration lists expected!\n");
@@ -433,11 +549,24 @@ int walk_level0(mpc_ast_t *ast)
 		}
 
 		break;
-	case PSTATE_LEVEL0_AFTER_SYSTEM:
-		parser_state = PSTATE_LEVEL0_MAIN_BLOCK;
+	case PSTATE_LEVEL0_SYSTEM:
+		if (0 == strcmp(ast->tag, "system|>")) {
+			parser_state = PSTATE_LEVEL0_SYSTEM;
+			ret = walk_level0_system(ast);
+			if (ret)
+				return -1;
+			break;
+		}
+		parser_state = PSTATE_LEVEL0_AFTER_MAIN_BLOCK;
+		ret = walk_level0_main_block(ast);
+		if (ret)
+			return -1;
+		break;
+	case PSTATE_LEVEL0_AFTER_MAIN_BLOCK:
+		printf("Done.\n");
 		break;
 	default:
-		ERROR_PRINT("Unpredictable parser state!\n");
+		ERROR_PRINT("Unpredictable parser state: %d!\n", parser_state);
 		return -1;
 	};
 
@@ -486,11 +615,13 @@ int parser(char *input)
 	mpc_parser_t *Catastrophe = mpc_new("catastrophe");
 	mpc_parser_t *Declare = mpc_new("declare");
 	mpc_parser_t *Function = mpc_new("function");
+	mpc_parser_t *Funcname = mpc_new("funcname");
 
 	mpca_lang(MPCA_LANG_DEFAULT,
 			"integer \"integer\" : /[0-9]+/ ;"
 			"float \"float\" : /[0-9]*.?[0-9]+/ ;"
 			"variable \"variable\" : /[A-Za-z]+[A-Za-z0-9]*/ ;"
+			"funcname \"funcname\" : /[A-Za-z]+[A-Za-z0-9]*/ ;"
 			"array : <variable> '[' <expression> ']' ;"
 			"expression : <product> (('+' | '-') <product>)* ;"
 			"product : <value> (('*' | '/') <value>)* ;"
@@ -504,7 +635,7 @@ int parser(char *input)
 			"system: /SYSTEM/ <variable> '('<integer>')' <varlist> <block> ;"
 			"declare: <parlist> | <varlist> | <veclist>;"
 			"catastrophe : /^/ /CATASTROPHE/ <variable> (<declare>)+ (<system>)+ <block>'.' /$/ ;"
-			"function: <variable> '(' <expression> (',' <expression>)* ')' ;",
+			"function: <funcname> '(' <expression> (',' <expression>)* ')' ;",
 			Integer,
 			Float,
 			Expression,
@@ -521,7 +652,8 @@ int parser(char *input)
 			Veclist,
 			System,
 			Declare,
-			Function
+			Function,
+			Funcname
 		 );
 
 	mpc_result_t result;
@@ -530,12 +662,13 @@ int parser(char *input)
 		mpc_ast_print(result.output);
 		walk_ast(result.output);
 		mpc_ast_delete(result.output);
+		printf("\n\n");
 	} else {
 		mpc_err_print(result.error);
 		mpc_err_delete(result.error);
 	}
 
-	mpc_cleanup(17,
+	mpc_cleanup(18,
 			Integer,
 			Float,
 			Expression,
@@ -552,7 +685,8 @@ int parser(char *input)
 			Veclist,
 			System,
 			Declare,
-			Function
+			Function,
+			Funcname
 		   );
 }
 
@@ -567,12 +701,12 @@ int main(int argc, char *argv[])
 		"VECTORS\n"
 		"Y[6];\n"
 		"SYSTEM A3 (6)\n"
-		"VARIABLES a, b, c, d;\n"
+		"VARIABLES a, b, x, d;\n"
 		"BEGIN\n"
-		"a <- a + b * (1 + 3) + vasya(x + 4) + 3.2;"
+		"a <- a + b * (1 + 3) + RungeKutta(x + 4) + 3.2;"
 		"a <- a + 3;"
 		"a <- 4;"
-		"yarr[4] <- lambda * (x + 1);"
+		"yarr[4] <- l1 * (x + 1);"
 		"END\n"
 		"BEGIN\n"
 		"END.\n"
