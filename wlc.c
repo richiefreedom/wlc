@@ -25,6 +25,7 @@
 enum symbol_type {
 	SYM_VAR = 0,
 	SYM_LOC_VAR,
+	SYM_STORAGE,
 	SYM_VEC,
 	SYM_PAR,
 	SYM_FUN
@@ -366,6 +367,9 @@ int walk_variable(mpc_ast_t *ast, struct symbol_table *sym_table,
 		case SYM_LOC_VAR:
 			printf("%s", ast->contents);
 			break;
+		case SYM_STORAGE:
+			printf("STORAGE(%s)", ast->contents);
+			break;
 		default:
 			ERROR_PRINT("Unexpected symbol type!\n");
 			return -1;
@@ -549,18 +553,15 @@ int walk_level0_parlist(mpc_ast_t *ast)
 	return 0;
 }
 
-int walk_varlist(mpc_ast_t *ast, struct symbol_table *sym_table, int system)
+int walk_varlist(mpc_ast_t *ast, struct symbol_table *sym_table,
+	enum symbol_type type)
 {
 	int i, ret;
 
 	for (i = 1; i < ast->children_num - 1; i+=2) {
 		DEBUG_PRINT("Var found: %s.\n", ast->children[i]->contents);
-		if (system)
 			ret = add_symbol(sym_table, ast->children[i]->contents,
-					SYM_LOC_VAR, 0);
-		else
-			ret = add_symbol(sym_table, ast->children[i]->contents,
-					SYM_VAR, 0);
+					type, 0);
 		if (ret)
 			return -1;
 	}
@@ -570,12 +571,17 @@ int walk_varlist(mpc_ast_t *ast, struct symbol_table *sym_table, int system)
 
 int walk_level0_varlist(mpc_ast_t *ast)
 {
-	return walk_varlist(ast, &catastrophe.sym_table, 0);
+	return walk_varlist(ast, &catastrophe.sym_table, SYM_VAR);
 }
 
 int walk_system_varlist(mpc_ast_t *ast, struct system *system)
 {
-	return walk_varlist(ast, &system->sym_table, 1);
+	return walk_varlist(ast, &system->sym_table, SYM_LOC_VAR);
+}
+
+int walk_level0_strlist(mpc_ast_t *ast)
+{
+	return walk_varlist(ast, &catastrophe.sym_table, SYM_STORAGE);
 }
 
 int walk_level0_veclist(mpc_ast_t *ast)
@@ -728,6 +734,11 @@ int walk_level0(mpc_ast_t *ast)
 			if (ret)
 				return -1;
 			parser_state = PSTATE_LEVEL0_AFTER_DECL;
+		} else if (0 == strcmp(ast->tag, "strlist|>")) {
+			ret = walk_level0_strlist(ast);
+			if (ret)
+				return -1;
+			parser_state = PSTATE_LEVEL0_AFTER_DECL;
 		} else {
 			ERROR_PRINT("One of declaration lists expected!\n");
 			return -1;
@@ -797,6 +808,7 @@ int parser(char *input)
 	mpc_parser_t *Varlist = mpc_new("varlist");
 	mpc_parser_t *Parlist = mpc_new("parlist");
 	mpc_parser_t *Veclist = mpc_new("veclist");
+	mpc_parser_t *Strlist = mpc_new("strlist");
 	mpc_parser_t *System = mpc_new("system");
 	mpc_parser_t *Catastrophe = mpc_new("catastrophe");
 	mpc_parser_t *Declare = mpc_new("declare");
@@ -815,11 +827,12 @@ int parser(char *input)
 			"leftside : <array> | <variable> ;"
 			"assignment : <leftside> /<-/ <expression> ;"
 			"block : /BEGIN/ (<assignment> ';')* /END/ ;"
+			"strlist: /STORAGE/ (<variable> (','|';'))+ ;"
 			"varlist: /VARIABLES/ (<variable> (','|';'))+ ;"
 			"parlist: /PARAMETERS/ (<variable> (','|';'))+ ;"
 			"veclist: /VECTORS/ (<array> (','|';'))+ ;"
 			"system: /SYSTEM/ <variable> '('<integer>')' <varlist> <block> ;"
-			"declare: <parlist> | <varlist> | <veclist>;"
+			"declare: <parlist> | <varlist> | <veclist> | <strlist> ;"
 			"catastrophe : /^/ /CATASTROPHE/ <variable> (<declare>)+ (<system>)+ <block>'.' /$/ ;"
 			"function: <funcname> '(' <expression> (',' <expression>)* ')' ;",
 			Integer,
@@ -839,7 +852,8 @@ int parser(char *input)
 			System,
 			Declare,
 			Function,
-			Funcname
+			Funcname,
+			Strlist
 		 );
 
 	mpc_result_t result;
@@ -855,7 +869,7 @@ int parser(char *input)
 		mpc_err_delete(result.error);
 	}
 
-	mpc_cleanup(18,
+	mpc_cleanup(19,
 			Integer,
 			Float,
 			Expression,
@@ -873,7 +887,8 @@ int parser(char *input)
 			System,
 			Declare,
 			Function,
-			Funcname
+			Funcname,
+			Strlist
 		   );
 }
 
@@ -887,12 +902,14 @@ int main(int argc, char *argv[])
 		"gamma1, gamma2;\n"
 		"VECTORS\n"
 		"Y[6];\n"
+		"STORAGE\n"
+		"Ai, Aid;\n"
 		"SYSTEM A3 (6)\n"
 		"VARIABLES a, b, x, d;\n"
 		"BEGIN\n"
 		"a <- a + gamma1 * (1 + 3) + RungeKutta(x + 4) + 3.2;"
 		"a <- a + 3;"
-		"a <- 4;"
+		"Ai <- 4;"
 		"yarr[4] <- l1 * (x + 1);"
 		"END\n"
 		"BEGIN\n"
