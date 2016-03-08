@@ -24,13 +24,13 @@
 
 enum symbol_type {
 	SYM_VAR = 0,
+	SYM_PAR,
 	SYM_LOC_VAR,
 	SYM_STORAGE,
 	SYM_INT_VAR,
 	SYM_INT_VEC,
 	SYM_EQN_VEC,
 	SYM_VEC,
-	SYM_PAR,
 	SYM_FUN
 };
 
@@ -183,7 +183,7 @@ void gen_glob_parameters(void)
 	printf("static char *par_names[] = {");
 	for_each_symbol_type(&catastrophe.sym_table, SYM_PAR,
 			gen_glob_sym_name);
-	printf("};\n");
+	printf("NULL};\n");
 }
 
 void gen_glob_variables(void)
@@ -196,7 +196,15 @@ void gen_glob_variables(void)
 	printf("static char *var_names[] = {");
 	for_each_symbol_type(&catastrophe.sym_table, SYM_VAR,
 			gen_glob_sym_name);
-	printf("};\n");
+	printf("NULL};\n");
+}
+
+void gen_glob_storage(void)
+{
+	printf("\nenum storage_entries {\n");
+	for_each_symbol_type(&catastrophe.sym_table, SYM_STORAGE,
+			gen_glob_sym_id);
+	printf("};\n\n");
 }
 
 void gen_loc_sym_name(struct symbol *symbol)
@@ -231,7 +239,8 @@ void gen_main_block_prologue(void)
 	printf(
 		"\tcmplx_equation_t *equation;\n"
 		"\tpoint_array_t *point_array;\n"
-		"\tdouble module, phase;\n\n"
+		"\tdouble module, phase;\n"
+		"\tint nope;\n\n"
 		"\tequation = catastrophe->equation;\n"
 		"\tpoint_array = catastrophe->point_array;\n\n"
 	);
@@ -287,7 +296,8 @@ void gen_rest(void)
 	gen_init();
 }
 
-int apply_parse_rule(mpc_ast_t *ast, struct symbol_table *sym_table,
+int apply_parse_rule(mpc_ast_t *ast, mpc_ast_t *par_ast,
+		struct symbol_table *sym_table,
 		struct parse_table_entry *parse_table[], int strict)
 {
 	int i, ret;
@@ -318,7 +328,7 @@ int apply_parse_rule(mpc_ast_t *ast, struct symbol_table *sym_table,
 	ERROR_PRINT("Cannot find suitable rule %s!\n",
 		(strict)? "strictly" : "relaxed");
 	ERROR_PRINT("for tag: %s in %s.\n",
-			ast->tag, ast->tag);
+			ast->tag, par_ast->tag);
 
 	return -1;
 }
@@ -329,7 +339,8 @@ int walk_something(mpc_ast_t *ast, struct symbol_table *sym_table,
 	int i, ret;
 
 	if (strlen(ast->contents)) {
-		ret = apply_parse_rule(ast, sym_table, parse_leaf_table, 0);
+		ret = apply_parse_rule(ast, ast, sym_table,
+				parse_leaf_table, 0);
 		if (ret)
 			return -1;
 	}
@@ -338,8 +349,8 @@ int walk_something(mpc_ast_t *ast, struct symbol_table *sym_table,
 		if (strstr(ast->children[i]->tag, "char")) {
 			printf("%s", ast->children[i]->contents);
 		} else {
-			ret = apply_parse_rule(ast->children[i], sym_table,
-				parse_table, 1);
+			ret = apply_parse_rule(ast->children[i], ast,
+					sym_table, parse_table, 1);
 			if (ret)
 				return -1;
 		}
@@ -364,6 +375,9 @@ int walk_variable(mpc_ast_t *ast, struct symbol_table *sym_table,
 		}
 
 		switch (sym->type) {
+		case SYM_PAR:
+			printf("PARAM(%s)", ast->contents);
+			break;
 		case SYM_VAR:
 			printf("VAR(%s)", ast->contents);
 			break;
@@ -454,7 +468,9 @@ int walk_ass_regex(mpc_ast_t *ast, struct symbol_table *sym_table,
 
 char *known_functions[] = {
 	"RungeKutta",
-	"Vasya",
+	"cos",
+	"sin",
+	"cexp",
 	NULL
 };
 
@@ -536,6 +552,8 @@ struct parse_table_entry *parse_value_table[] = {
 };
 
 struct parse_table_entry *parse_product_table[] = {
+	&parse_function,
+	&parse_array,
 	&parse_value_variable,
 	&parse_value,
 	NULL
@@ -544,10 +562,12 @@ struct parse_table_entry *parse_product_table[] = {
 struct parse_table_entry *parse_function_table[] = {
 	&parse_expression,
 	&parse_funcname,
+	&parse_product,
 	NULL
 };
 
 struct parse_table_entry *parse_expression_table[] = {
+	&parse_array,
 	&parse_product,
 	&parse_function,
 	&parse_expression,
@@ -555,6 +575,7 @@ struct parse_table_entry *parse_expression_table[] = {
 };
 
 struct parse_table_entry *parse_assignment[] = {
+	&parse_function,
 	&parse_leftside_variable,
 	&parse_ass_regex,
 	&parse_variable,
@@ -701,6 +722,8 @@ int walk_level0_system(mpc_ast_t *ast)
 			current_system->num_equations);
 	add_symbol(&current_system->sym_table, "result", SYM_INT_VEC,
 			current_system->num_equations);
+	add_symbol(&current_system->sym_table, "I", SYM_INT_VAR, 0);
+	add_symbol(&current_system->sym_table, "M_PI", SYM_INT_VAR, 0);
 
 	i = 5;
 	while (0 == strcmp(ast->children[i]->tag, "varlist|>")) {
@@ -734,6 +757,9 @@ int walk_level0_main_block(mpc_ast_t *ast)
 			current_system->num_equations);
 	add_symbol(&catastrophe.sym_table, "sysresult", SYM_EQN_VEC,
 			current_system->num_equations);
+	add_symbol(&catastrophe.sym_table, "I", SYM_INT_VAR, 0);
+	add_symbol(&catastrophe.sym_table, "M_PI", SYM_INT_VAR, 0);
+	add_symbol(&catastrophe.sym_table, "nope", SYM_INT_VAR, 0);
 
 	printf("{\n");
 
@@ -774,6 +800,7 @@ int walk_level0(mpc_ast_t *ast)
 		if (0 == strcmp(ast->tag, "system|>")) {
 			gen_glob_parameters();
 			gen_glob_variables();
+			gen_glob_storage();
 			parser_state = PSTATE_LEVEL0_SYSTEM;
 			ret = walk_level0_system(ast);
 			if (ret)
@@ -879,9 +906,9 @@ int parser(char *input)
 
 	mpca_lang(MPCA_LANG_DEFAULT,
 			"integer \"integer\" : /[0-9]+/ ;"
-			"float \"float\" : /[0-9]*.?[0-9]+/ ;"
-			"variable \"variable\" : /[A-Za-z]+[A-Za-z0-9]*/ ;"
-			"funcname \"funcname\" : /[A-Za-z]+[A-Za-z0-9]*/ ;"
+			"float \"float\" : /[0-9]*\\.?[0-9]+/ ;"
+			"variable \"variable\" : /[A-Za-z'_']+[A-Za-z0-9'_']*/ ;"
+			"funcname \"funcname\" : /[A-Za-z'_']+[A-Za-z0-9'_']*/ ;"
 			"array : <variable> '[' <expression> ']' ;"
 			"expression : <product> (('+' | '-') <product>)* ;"
 			"product : <value> (('*' | '/') <value>)* ;"
@@ -921,7 +948,7 @@ int parser(char *input)
 	mpc_result_t result;
 
 	if (mpc_parse("stdin>", input, Catastrophe, &result)) {
-		//mpc_ast_print(result.output);
+		mpc_ast_print(result.output);
 		gen_headers();
 		walk_ast(result.output);
 		mpc_ast_delete(result.output);
@@ -956,27 +983,36 @@ int parser(char *input)
 
 int main(int argc, char *argv[])
 {
-	parser(
-		"CATASTROPHE A3\n"
-		"PARAMETERS\n"
-		"l1, l2, l3;\n"
-		"VARIABLES\n"
-		"gamma1, gamma2;\n"
-		"VECTORS\n"
-		"Y[6];\n"
-		"STORAGE\n"
-		"Ai, Aid;\n"
-		"SYSTEM A3 (6)\n"
-		"VARIABLES a, b, x, d;\n"
-		"BEGIN\n"
-		"t <- a + gamma1 * (1 + 3) + RungeKutta(x + 4) + 3.2;"
-		"a <- a + 3;"
-		"Ai <- 4;"
-		"result[5] <- l1 * (x + 1);"
-		"END\n"
-		"BEGIN\n"
-		"gamma2 <- sysresult[2];\n"
-		"END.\n"
-	);
+	char *content;
+	size_t size;
+	FILE *fp;
+
+	if (argc != 2) {
+		ERROR_PRINT("At least one argument is necessary!\n");
+		return 1;
+	}
+
+	fp = fopen(argv[1], "r");
+	if (!fp) {
+		ERROR_PRINT("Unable to open file: %s!\n", argv[1]);
+		return 1;
+	}
+
+	fseek(fp, 0, SEEK_END);
+	size = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+
+	content = malloc(size + 1);
+	if (!content) {
+		ERROR_PRINT("Unable to allocate memory for file contents!\n");
+		return 1;
+	}
+
+	fread(content, size, 1, fp);
+	content[size] = 0;
+	fclose(fp);
+
+	parser(content);
+
 	return 0;
 }
