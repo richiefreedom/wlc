@@ -158,7 +158,13 @@ void gen_headers(void)
 	"#include <wavecat/catastrophe.h>\n"
 	"#include <wavecat/point_array.h>\n"
 	"#include <lib/integration/runge_kutta.h>\n"
-	"#include <math.h>\n";
+	"#include <math.h>\n\n"
+	"#define RungeKutta(step, func) \\\n"
+	"\t({\n"
+	"\t\tcmplx_runge_kutta(0.0, 1.0, (step), catastrophe);\n"
+	"\t\tequation_set_function(equation, (func));\n"
+	"\t\t0;\n"
+	"\t})\n\n";
 
 	printf("%s\n", str);
 }
@@ -958,7 +964,7 @@ int parser(char *input)
 	mpc_result_t result;
 
 	if (mpc_parse("stdin>", input, Catastrophe, &result)) {
-		mpc_ast_print(result.output);
+		//mpc_ast_print(result.output);
 		gen_headers();
 		walk_ast(result.output);
 		mpc_ast_delete(result.output);
