@@ -1,0 +1,32 @@
+CATASTROPHE A3
+
+PARAMETERS l1, l2;
+STORAGE g14, g34, k1, k2, c8, s8, s38, c38;
+
+SYSTEM A3(3)
+VARIABLES L1, L2, I21, I22;
+BEGIN
+	L1 <- l1 * t;
+	L2 <- l2 * t;
+
+	I21 <- 0.25 * (L1 * input[0] - 2.0 * I * L2 * input[1]);
+	I22 <- (0 - 0.25) * I * (input[0] + L1 * input[1] + 2.0 * L2 * input[2]);
+
+	result[0] <- l1 * input[1] + l2 * input[2];
+	result[1] <- I * input[2] * l1 + I21 * l2;
+	result[2] <- l1 * I21 + l2 * I22;
+END
+BEGIN
+	g14 <- 3.625609908;
+	g34 <- 1.225416702;
+	c8 <- cos(k2 * M_PI / 8.0);
+	s8 <- sin(k2 * M_PI / 8.0);
+	s38 <- sin(k2 * 3.0 * M_PI / 8.0);
+	c38 <- cos(k2 * 3.0 * M_PI / 8.0);
+
+	sysinput[0] <- 0.5 * g14 * cexp(I * M_PI / 8.0);
+	sysinput[1] <- 0;
+	sysinput[2] <- 0.5 * I * g34 * cexp(I * 3.0 * M_PI / 8.0);
+
+	nope <- RungeKutta(0.01, A3);
+END.
