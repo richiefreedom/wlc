@@ -11,8 +11,8 @@
 #define SYM_NAME_LEN		128
 #define CAT_NAME_LEN		SYM_NAME_LEN
 #define SYS_NAME_LEN		SYM_NAME_LEN
-#define MAX_SYMS_PER_TABLE	64
-#define MAX_EQNS_PER_CAT	16
+#define MAX_SYMS_PER_TABLE	128
+#define MAX_EQNS_PER_CAT	 64
 
 #ifdef DEBUG
 #define DEBUG_PRINT(...) do {fprintf(stderr, __VA_ARGS__ );} while(0)
@@ -26,6 +26,9 @@ enum symbol_type {
 	SYM_VAR = 0,
 	SYM_LOC_VAR,
 	SYM_STORAGE,
+	SYM_INT_VAR,
+	SYM_INT_VEC,
+	SYM_EQN_VEC,
 	SYM_VEC,
 	SYM_PAR,
 	SYM_FUN
@@ -364,11 +367,12 @@ int walk_variable(mpc_ast_t *ast, struct symbol_table *sym_table,
 		case SYM_VAR:
 			printf("VAR(%s)", ast->contents);
 			break;
+		case SYM_INT_VAR:
 		case SYM_LOC_VAR:
 			printf("%s", ast->contents);
 			break;
 		case SYM_STORAGE:
-			printf("STORAGE(%s)", ast->contents);
+			printf("STORAGE_COMPLEX(%s)", ast->contents);
 			break;
 		default:
 			ERROR_PRINT("Unexpected symbol type!\n");
@@ -385,8 +389,55 @@ int walk_variable(mpc_ast_t *ast, struct symbol_table *sym_table,
 int walk_array(mpc_ast_t *ast, struct symbol_table *sym_table,
 		struct parse_table_entry *parse_table[])
 {
-	printf("%s[%s]", ast->children[0]->contents,
-			ast->children[2]->contents);
+	struct symbol *sym = NULL;
+
+	if (sym_table)
+		sym = find_symbol(sym_table, ast->children[0]->contents);
+	if (!sym)
+		sym = find_symbol(&catastrophe.sym_table,
+				ast->children[0]->contents);
+	if (!sym) {
+		ERROR_PRINT("Unknown symbol: %s!\n",
+				ast->children[0]->contents);
+		return -1;
+	}
+
+	if (atoi(ast->children[2]->contents) >= sym->capacity) {
+		ERROR_PRINT("Array out of bounds access!\n");
+		return -1;
+	}
+
+	switch (sym->type) {
+	case SYM_EQN_VEC:
+		/* Such kind of symbols cannot be used locally. */
+		if (sym_table) {
+			ERROR_PRINT(
+				"Unable to use such kind of symbols here!\n");
+			return -1;
+		}
+
+		if (0 == strcmp(ast->children[0]->contents, "sysinput")) {
+			printf("equation->initial_vector[%s]",
+					ast->children[2]->contents);
+		} else if (0 == strcmp(ast->children[0]->contents,
+					"sysresult")) {
+			printf("equation->resulting_vector[%s]",
+					ast->children[2]->contents);
+		} else {
+			ERROR_PRINT("Unexpected EQN symbol!\n");
+			return -1;
+		}
+		break;
+	case SYM_INT_VEC:
+		if (!sym_table) {
+			ERROR_PRINT(
+				"Unable to use such kind of symbols here!\n");
+			return -1;
+		}
+	default:
+		printf("%s[%s]", ast->children[0]->contents,
+				ast->children[2]->contents);
+	}
 
 	return 0;
 }
@@ -644,6 +695,13 @@ int walk_level0_system(mpc_ast_t *ast)
 
 	gen_system();
 
+	/* Add symbols defined in any SODE by default. */
+	add_symbol(&current_system->sym_table, "t", SYM_INT_VAR, 0);
+	add_symbol(&current_system->sym_table, "input", SYM_INT_VEC,
+			current_system->num_equations);
+	add_symbol(&current_system->sym_table, "result", SYM_INT_VEC,
+			current_system->num_equations);
+
 	i = 5;
 	while (0 == strcmp(ast->children[i]->tag, "varlist|>")) {
 		ret = walk_system_varlist(ast->children[i], current_system);
@@ -672,12 +730,16 @@ int walk_level0_main_block(mpc_ast_t *ast)
 	DEBUG_PRINT("Main block found.\n");
 
 	gen_main_block();
+	add_symbol(&catastrophe.sym_table, "sysinput", SYM_EQN_VEC,
+			current_system->num_equations);
+	add_symbol(&catastrophe.sym_table, "sysresult", SYM_EQN_VEC,
+			current_system->num_equations);
 
 	printf("{\n");
 
 	gen_main_block_prologue();
 
-	ret = walk_block(ast, &current_system->sym_table);
+	ret = walk_block(ast, NULL);
 	if (ret)
 		return -1;
 
@@ -907,12 +969,13 @@ int main(int argc, char *argv[])
 		"SYSTEM A3 (6)\n"
 		"VARIABLES a, b, x, d;\n"
 		"BEGIN\n"
-		"a <- a + gamma1 * (1 + 3) + RungeKutta(x + 4) + 3.2;"
+		"t <- a + gamma1 * (1 + 3) + RungeKutta(x + 4) + 3.2;"
 		"a <- a + 3;"
 		"Ai <- 4;"
-		"yarr[4] <- l1 * (x + 1);"
+		"result[5] <- l1 * (x + 1);"
 		"END\n"
 		"BEGIN\n"
+		"gamma2 <- sysresult[2];\n"
 		"END.\n"
 	);
 	return 0;
