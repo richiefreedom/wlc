@@ -388,6 +388,9 @@ int walk_variable(mpc_ast_t *ast, struct symbol_table *sym_table,
 		case SYM_STORAGE:
 			printf("STORAGE_COMPLEX(%s)", ast->contents);
 			break;
+		case SYM_FUN:
+			printf("catastrophe_%s_function", ast->contents);
+			break;
 		default:
 			ERROR_PRINT("Unexpected symbol type!\n");
 			return -1;
@@ -724,6 +727,13 @@ int walk_level0_system(mpc_ast_t *ast)
 			current_system->num_equations);
 	add_symbol(&current_system->sym_table, "I", SYM_INT_VAR, 0);
 	add_symbol(&current_system->sym_table, "M_PI", SYM_INT_VAR, 0);
+
+	/*
+	 * Add a symbol with the name of the SODE for usage as functional
+	 * arguments
+	 */
+	add_symbol(&catastrophe.sym_table, ast->children[1]->contents,
+		SYM_FUN, 0);
 
 	i = 5;
 	while (0 == strcmp(ast->children[i]->tag, "varlist|>")) {
